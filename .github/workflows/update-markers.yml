@@ -1,0 +1,46 @@
+name: Update town ledger data
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub may delay scheduled runs by a few minutes.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Fetch markers.json from the Mvndicraft map
+        run: |
+          curl -sSL --fail --retry 3 --retry-delay 5 \
+            -o markers.new.json \
+            "https://map.mvndicraft.net/tiles/minecraft_overworld/markers.json"
+          # Sanity check: must be valid JSON and mention the towny marker set,
+          # otherwise keep the old snapshot rather than committing garbage.
+          python3 - << 'EOF'
+          import json, sys
+          with open("markers.new.json") as f:
+              data = json.load(f)
+          assert isinstance(data, list), "not a JSON array"
+          assert any((s.get("id","")+s.get("name","")).lower().find("towny") >= 0 for s in data), "no towny set"
+          print("Snapshot OK:", sum(len(s.get("markers",[])) for s in data), "markers")
+          EOF
+          mv markers.new.json markers.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "ledger-bot"
+          git config user.email "actions@github.com"
+          git add markers.json
+          if git diff --cached --quiet; then
+            echo "No changes in town data this run."
+          else
+            git commit -m "Update town ledger data [skip ci]"
+            git push
+          fi
